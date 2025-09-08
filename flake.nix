@@ -12,9 +12,14 @@
         buildInputs = with pkgs; [
           (python313.withPackages (ppkgs: with ppkgs; [
             python-lsp-server
+            uv
+            pydantic
+            fastapi-cli
             fastapi
             joblib
             streamlit
+            pandas
+            scikit-learn
           ]))
         ];
       };

@@ -1,2 +1,4 @@
 .direnv
 regression.joblib
+src/__pycache__
+src/mlops_2026_mini_project1.egg-info

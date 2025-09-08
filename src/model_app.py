@@ -1,6 +1,17 @@
 import streamlit as st
 import joblib
+import pandas as pd
+from train_model import build_model,model_file
 
-size = st.number_input("bedroom size")
-n = st.number_input("number bedroom")
-has_garden = st.checkbox("has garden")
+
+model = joblib.load(model_file)
+
+size = st.number_input("bedroom size", 1, 100)
+nb_rooms = st.number_input("number bedroom", 1, 5, 1)
+garden = st.checkbox("has garden")
+
+input = [[size, nb_rooms, garden]]
+price = model.predict(input)
+
+st.metric("Price", price)
+
