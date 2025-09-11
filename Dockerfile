@@ -1,6 +1,8 @@
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
-COPY data ./
-COPY src ./
+WORKDIR /app
+
+COPY data/ ./data/
+COPY src/ ./src/
 COPY pyproject.toml uv.lock .
 RUN uv sync
 
