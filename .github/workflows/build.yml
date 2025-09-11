@@ -28,5 +28,5 @@ jobs:
       -
         name: Restart on the server
         run: |
-          printf '${{ secrets.DEPLOY_SSH_KEY }}' > ~/.ssh/id_ed25519
-          ssh 'ubuntu@4.210.225.87' "cd old"
+          printf '${{ secrets.DEPLOY_SSH_KEY }}' > deploy_key
+          ssh -i deploy_key 'ubuntu@4.210.225.87' "cd old/MLOPS-2026-mini_project1/ && git pull && cd deploy && docker compose up -d --pull"
