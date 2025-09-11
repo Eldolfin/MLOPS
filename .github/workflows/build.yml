@@ -30,4 +30,6 @@ jobs:
         run: |
           printf -- '${{ secrets.DEPLOY_SSH_KEY }}' > deploy_key
           chmod 400 deploy_key
-          ssh -o StrictHostKeyChecking=no -i deploy_key 'ubuntu@4.210.225.87' "cd old/MLOPS-2026-mini_project1/ && git pull && cd deploy && docker compose up -d --pull"
+          ssh -o StrictHostKeyChecking=no -i deploy_key 'ubuntu@4.210.225.87' 'cd /home/ubuntu/old/MLOPS/ && git pull && cd deploy && docker-compose pull && docker-compose up -d'
+
+
