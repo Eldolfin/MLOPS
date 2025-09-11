@@ -1,0 +1,6 @@
+services:
+  model-api:
+    image: eldolfin/mlops-hello-world:latest
+    restart: always
+    ports:
+      - 6942:8080
