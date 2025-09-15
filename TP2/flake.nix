@@ -24,6 +24,7 @@
             targetPkgs = pkgs:
               with pkgs; [
                 python3
+                uv
                 zlib
                 libffi
                 stdenv.cc.cc.lib # for libstdc++
