@@ -1,64 +1,148 @@
 import mlflow
-from mlflow.models.signature import infer_signature
+import mlflow.pytorch
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+import timm
+from datasets import load_dataset
+from sklearn.metrics import accuracy_score
 
-import pandas as pd
-from sklearn import datasets
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+hyper_params = {"backbone": "efficientnet_b4", "lr": 1e-4, "batch_size": 32, "epochs": 2}
 
-mlflow.set_tracking_uri(uri="http://localhost:5000")
+# -----------------------------
+# Load FairFace via Hugging Face datasets
+# -----------------------------
+ds = load_dataset("HuggingFaceM4/FairFace", "1.25")
 
+train_ds_raw = ds['train']
+val_ds_raw = ds['validation']
 
-# Load the Iris dataset
-X, y = datasets.load_iris(return_X_y=True)
+# -----------------------------
+# Custom Dataset for PyTorch
+# -----------------------------
+from PIL import Image
+import io
 
-# Split the data into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
+class FairFaceDataset(Dataset):
+    def __init__(self, hf_dataset, transform=None):
+        self.ds = hf_dataset
+        self.transform = transform
 
-# Define the model hyperparameters
-params = {
-    "solver": "lbfgs",
-    "max_iter": 1000,
-    "multi_class": "auto",
-    "random_state": 8888,
-}
+    def __len__(self):
+        return len(self.ds)
 
-# Train the model
-lr = LogisticRegression(**params)
-lr.fit(X_train, y_train)
+    def __getitem__(self, idx):
+        row = self.ds[idx]
+        img_bytes = row["image"]  # HF dataset returns bytes
+        img = img_bytes.convert("RGB")
+        if self.transform:
+            img = self.transform(img)
 
-# Predict on the test set
-y_pred = lr.predict(X_test)
+        # Age, gender, race are assumed integer labels in HF dataset
+        age = int(row["age"])
+        gender = int(row["gender"])
+        race = int(row["race"])
 
-# Calculate metrics
-accuracy = accuracy_score(y_test, y_pred)
-# Create a new MLflow Experiment
-mlflow.set_experiment("MLflow Quickstart")
+        return img, (age, gender, race)
 
-# Start an MLflow run
+# -----------------------------
+# Transforms & DataLoaders
+# -----------------------------
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),  # EfficientNet input size
+    transforms.ToTensor(),
+    # transforms.Normalize([0.485, 0.456, 0.406],
+    #                      [0.229, 0.224, 0.225])
+])
+
+train_ds = FairFaceDataset(train_ds_raw, transform=transform)
+val_ds = FairFaceDataset(val_ds_raw, transform=transform)
+
+train_loader = DataLoader(train_ds, batch_size=hyper_params["batch_size"], shuffle=True)
+val_loader = DataLoader(val_ds, batch_size=hyper_params["batch_size"], shuffle=False)
+
+# -----------------------------
+# EfficientNet Multi-Head Model
+# -----------------------------
+class MultiHeadEffNet(nn.Module):
+    def __init__(self, backbone, n_age=100, n_gender=2, n_race=7):
+        super().__init__()
+        self.base = timm.create_model(backbone, pretrained=True, num_classes=0, global_pool="avg")
+        feat_dim = self.base.num_features
+
+        self.fc_age = nn.Linear(feat_dim, n_age)
+        self.fc_gender = nn.Linear(feat_dim, n_gender)
+        self.fc_race = nn.Linear(feat_dim, n_race)
+
+    def forward(self, x):
+        f = self.base(x)
+        age = self.fc_age(f)
+        gender = self.fc_gender(f)
+        race = self.fc_race(f)
+        return age, gender, race
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = MultiHeadEffNet(hyper_params["backbone"]).to(device)
+
+# -----------------------------
+# Losses & Optimizer
+# -----------------------------
+criterion_age = nn.CrossEntropyLoss()
+criterion_gender = nn.CrossEntropyLoss()
+criterion_race = nn.CrossEntropyLoss()
+optimizer = optim.AdamW(model.parameters(), lr=hyper_params["lr"])
+
+# -----------------------------
+# Training / Evaluation
+# -----------------------------
+def train_epoch(loader):
+    model.train()
+    total_loss = 0
+    for imgs, (age, gender, race) in loader:
+        imgs, age, gender, race = imgs.to(device), age.to(device), gender.to(device), race.to(device)
+
+        optimizer.zero_grad()
+        out_age, out_gender, out_race = model(imgs)
+
+        loss = (criterion_age(out_age, age)
+                + criterion_gender(out_gender, gender)
+                + criterion_race(out_race, race))
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    return total_loss / len(loader)
+
+def eval_epoch(loader):
+    model.eval()
+    age_preds, age_labels = [], []
+    with torch.no_grad():
+        for imgs, (age, gender, race) in loader:
+            imgs = imgs.to(device)
+            out_age, out_gender, out_race = model(imgs)
+            age_preds.extend(out_age.argmax(1).cpu().numpy())
+            age_labels.extend(age.numpy())
+    return accuracy_score(age_labels, age_preds)
+
+# -----------------------------
+# MLflow logging
+# -----------------------------
+mlflow.set_experiment("FairFace_EfficientNet_HF")
+
 with mlflow.start_run():
-    # Log the hyperparameters
-    mlflow.log_params(params)
+    mlflow.log_params()
 
-    # Log the loss metric
-    mlflow.log_metric("accuracy", accuracy)
+    for epoch in range(hyper_params["epochs"]):
+        train_loss = train_epoch(train_loader)
+        val_acc = eval_epoch(val_loader)
 
-    # Infer the model signature
-    signature = infer_signature(X_train, lr.predict(X_train))
+        mlflow.log_metric("train_loss", train_loss, step=epoch)
+        mlflow.log_metric("val_acc_age", val_acc, step=epoch)
 
-    # Log the model, which inherits the parameters and metric
-    model_info = mlflow.sklearn.log_model(
-        sk_model=lr,
-        name="iris_model",
-        signature=signature,
-        input_example=X_train,
-        registered_model_name="tracking-quickstart",
-    )
-
-    # Set a tag that we can use to remind ourselves what this model was for
-    mlflow.set_logged_model_tags(
-        model_info.model_id, {"Training Info": "Basic LR model for iris data"}
-    )
+    # Log full model
+    example_img, _ = next(iter(val_loader))
+    example_img = example_img.to(device)
+    mlflow.pytorch.log_model(model, "fairface_effnet_hf",
+                             input_example=example_img,
+                             registered_model_name="FairFaceEfficientNet_HF")
