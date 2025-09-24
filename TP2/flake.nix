@@ -1,5 +1,5 @@
 {
-  description = "Simple python fhs devshell that works";
+  description = "MLflow Dev Shell with Python and NumPy support";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -7,9 +7,9 @@
   };
 
   outputs = {
+    self,
     nixpkgs,
     flake-utils,
-    ...
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -17,22 +17,19 @@
           inherit system;
         };
       in {
-        devShells.default = let
-          python = pkgs.python313;
-        in
+        devShells.default =
           (pkgs.buildFHSEnv {
-            name = "simple-python-fhs";
+            name = "mlflow-shell";
 
-            targetPkgs = _: [
-              pkgs.mlflow-server
-              python
-              pkgs.uv
-              pkgs.zlib
-            ];
-            profile = ''
-              export UV_PYTHON=${python}
-              fish # replace with your shell
-            '';
+            targetPkgs = pkgs:
+              with pkgs; [
+                python3
+                uv
+                zlib
+                libffi
+                stdenv.cc.cc.lib # for libstdc++
+                git
+              ];
           }).env;
       }
     );
